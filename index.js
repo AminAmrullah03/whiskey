@@ -1,8 +1,8 @@
-const { 
-    makeWASocket, 
-    DisconnectReason, 
-    useMultiFileAuthState, 
-    downloadMediaMessage, 
+const {
+    makeWASocket,
+    DisconnectReason,
+    useMultiFileAuthState,
+    downloadMediaMessage,
 } = require('@whiskeysockets/baileys');
 const fs = require("fs");
 const config = require('./config.json');
@@ -10,15 +10,10 @@ const path = require('path');
 const { format } = require('date-fns');
 const { zonedTimeToUtc } = require('date-fns-tz');
 
-// Path to the message storage file
-const messageFilePath = path.join(__dirname, 'messages.json');
-
-// Function to get formatted date time
 function formatDateTimeNow(timeZoneConfig, dateTimeFormat) {
     return format(zonedTimeToUtc(new Date(), timeZoneConfig), dateTimeFormat, { timeZone: timeZoneConfig });
 }
 
-// Function to log error to a file
 function logErrorToFile(errorMsg, config) {
     const logDirectory = 'errorlog';
     const timestamp = formatDateTimeNow(config.timezone, 'dd-MM-yyyy-HH-mm-ss');
@@ -33,7 +28,13 @@ function logErrorToFile(errorMsg, config) {
     });
 }
 
-// Function to store message in a file
+const fs = require('fs');
+const path = require('path');
+
+// Path to the message storage file
+const messageFilePath = path.join(__dirname, 'messages.json');
+
+// Function to store message in file
 function storeMessage(messageKey, content) {
     const messageData = {
         key: messageKey,
@@ -54,7 +55,7 @@ function storeMessage(messageKey, content) {
     fs.writeFileSync(messageFilePath, JSON.stringify(messages, null, 2), 'utf-8');
 }
 
-// Function to remove messages older than 1 hour
+// Function to remove messages older than 1 hour (3600000 ms)
 function cleanUpOldMessages() {
     if (fs.existsSync(messageFilePath)) {
         let messages = JSON.parse(fs.readFileSync(messageFilePath, 'utf-8'));
@@ -71,58 +72,71 @@ function cleanUpOldMessages() {
 // Periodically clean up old messages every 10 minutes
 setInterval(cleanUpOldMessages, 600000); // 600000 ms = 10 minutes
 
-// Main function to connect to WhatsApp
-async function connectToWhatsApp () {
-    const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys');
+
+async function connectToWhatsApp() {
+    const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys')
     const sock = makeWASocket({
+        // can provide additional config here
         auth: state,
         printQRInTerminal: true
-    });
+    })
 
     sock.ev.on('creds.update', saveCreds);
 
     sock.ev.on('connection.update', (update) => {
-        const { connection, lastDisconnect } = update;
-        if(connection === 'close') {
-            const shouldReconnect = (lastDisconnect.error)?.output?.statusCode !== DisconnectReason.loggedOut;
-            if(shouldReconnect) {
-                connectToWhatsApp();
+        const { connection, lastDisconnect } = update
+        if (connection === 'close') {
+            const shouldReconnect = (lastDisconnect.error)?.output?.statusCode !== DisconnectReason.loggedOut
+            // console.log('connection closed due to ', lastDisconnect.error, ', reconnecting ', shouldReconnect)
+            // reconnect if not logged out
+            if (shouldReconnect) {
+                connectToWhatsApp()
             }
-        } else if(connection === 'open') {
-            console.log('opened connection');
+        } else if (connection === 'open') {
+            console.log('opened connection')
         }
     });
 
     sock.ev.on('messages.upsert', async m => {
         const message = m.messages[0];
-        
+
         try {
-            let isGroup = message.key.remoteJid?.includes('@g.us') ? true : false;
+            let isGroup = message.key.remoteJid?.includes('@g.us')
+                ? true
+                : false;
+
             let groupChatName;
             let pushName;
 
-            // Handle ViewOnce messages
+
+
             if (message.message?.viewOnceMessage || message.message?.viewOnceMessageV2 || message.message?.viewOnceMessageV2Extension) {
-                const viewonce = message.message?.viewOnceMessage || message.message?.viewOnceMessageV2 || message.message?.viewOnceMessageV2Extension;
+                // Checking different versions of ViewOnce messages
+                const viewonce = message.message?.viewOnceMessage
+                    || message.message?.viewOnceMessageV2
+                    || message.message?.viewOnceMessageV2Extension;
+
                 const mediaBuffer = await downloadMediaMessage(message, 'buffer');
-                
-                let mediaContent = viewonce.message?.imageMessage 
-                                    ? { image: mediaBuffer } 
-                                    : viewonce.message?.videoMessage 
-                                    ? { video: mediaBuffer }
-                                    : viewonce.message?.audioMessage
-                                    ? { audio: mediaBuffer } 
-                                    : null;
+
+                // Obtain media
+                let mediaContent = viewonce.message?.imageMessage
+                    ? { image: mediaBuffer }
+                    : viewonce.message?.videoMessage
+                        ? { video: mediaBuffer }
+                        : viewonce.message?.audioMessage
+                            ? { audio: mediaBuffer } // Added audio/voice message support
+                            : null;
 
                 let receivedCaptionDetails = viewonce.message?.imageMessage
-                                            ? viewonce.message?.imageMessage.caption
-                                            : viewonce.message?.videoMessage
-                                            ? viewonce.message?.videoMessage.caption
-                                            : viewonce.message?.audioMessage
-                                            ? viewonce.message?.audioMessage.caption 
-                                            : null;
-                
+                    ? viewonce.message?.imageMessage.caption
+                    : viewonce.message?.videoMessage
+                        ? viewonce.message?.videoMessage.caption
+                        : viewonce.message?.audioMessage
+                            ? viewonce.message?.audioMessage.caption // Get caption for audio if exists
+                            : null;
+
                 let sentCaptionDetails;
+
                 pushName = message.pushName;
                 if (isGroup) {
                     if (message.key.fromMe) {
@@ -130,61 +144,117 @@ async function connectToWhatsApp () {
                     }
                     const chat = await sock.groupMetadata(message.key.remoteJid);
                     groupChatName = chat.subject;
-                    sentCaptionDetails = `GC: ${groupChatName}\nPhone: ${message.key.participant?.match(/\d+/g).join('')}` 
-                    + (receivedCaptionDetails ? `\nCaption: ${receivedCaptionDetails}` : "");
-                } else {
+                    sentCaptionDetails = `GC: ${groupChatName}\nPhone: ${message.key.participant?.match(/\d+/g).join('')}`
+                        +
+                        (receivedCaptionDetails == "" || receivedCaptionDetails == undefined
+                            ? ""
+                            : `\nCaption: ${receivedCaptionDetails}`);
+                }
+                else {
                     if (message.key.fromMe) {
                         return;
                     }
                     sentCaptionDetails = `Phone: ${message.key.remoteJid?.match(/\d+/g).join('')}`
-                    + (receivedCaptionDetails ? `\nCaption: ${receivedCaptionDetails}` : "");
+                        +
+                        (receivedCaptionDetails == "" || receivedCaptionDetails == undefined
+                            ? ""
+                            : `\nCaption: ${receivedCaptionDetails}`);
                 }
 
                 if (mediaContent) {
-                    await sock.sendMessage(config.groupDumper, { ...mediaContent, caption: sentCaptionDetails });
+                    await sock.sendMessage(config.groupDumper, {
+                        ...mediaContent, // image, video or audio
+                        caption: sentCaptionDetails,
+                    });
                     console.log("Viewonce is sent");
-                } else {
+                }
+                else {
                     console.log("Viewonce is not sent");
                     throw new Error("Media error or time out");
                 }
             }
-
-            // Handle deleted messages
+            // Detect deleted messages
             if (message.message?.protocolMessage?.type == 0) {
                 const deletedMessageKey = message.message?.protocolMessage?.key;
-                const messages = fs.existsSync(messageFilePath) ? JSON.parse(fs.readFileSync(messageFilePath, 'utf-8')) : [];
-                const deletedMessage = messages.find(msg => msg.key.id === deletedMessageKey.id);
 
-                if (deletedMessage) {
-                    let deletedMessageDetails;
-                    if (isGroup) {
-                        const chat = await sock.groupMetadata(message.key.remoteJid);
-                        groupChatName = chat.subject;
-                        deletedMessageDetails = `GC: ${groupChatName}\nPhone: ${deletedMessageKey.participant?.match(/\d+/g).join('')}`
-                        + `\nDeleted Message Content: ${deletedMessage.content}`;
+                // Read the message store file
+                if (fs.existsSync(messageFilePath)) {
+                    const messages = JSON.parse(fs.readFileSync(messageFilePath, 'utf-8'));
+
+                    // Find the deleted message by its key
+                    const deletedMessage = messages.find(msg => msg.key.id === deletedMessageKey.id);
+
+                    if (deletedMessage) {
+                        let deletedMessageDetails;
+                        if (isGroup) {
+                            const chat = await sock.groupMetadata(message.key.remoteJid);
+                            groupChatName = chat.subject;
+                            deletedMessageDetails = `GC: ${groupChatName}\nPhone: ${deletedMessageKey.participant?.match(/\d+/g).join('')}`
+                                + `\nDeleted Message Content: ${deletedMessage.content}`;
+                        } else {
+                            deletedMessageDetails = `Phone: ${deletedMessageKey.remoteJid?.match(/\d+/g).join('')}`
+                                + `\nDeleted Message Content: ${deletedMessage.content}`;
+                        }
+
+                        // Send the deleted message content
+                        await sock.sendMessage(config.groupDumper, {
+                            text: deletedMessageDetails,
+                        });
+
+                        console.log("Deleted message content sent.");
+
+                        // Optionally remove the message from the file after use
+                        const updatedMessages = messages.filter(msg => msg.key.id !== deletedMessageKey.id);
+                        fs.writeFileSync(messageFilePath, JSON.stringify(updatedMessages, null, 2), 'utf-8');
                     } else {
-                        deletedMessageDetails = `Phone: ${deletedMessageKey.remoteJid?.match(/\d+/g).join('')}`
-                        + `\nDeleted Message Content: ${deletedMessage.content}`;
+                        console.log("Deleted message content not found.");
+                    }
+                }
+            }
+            else {
+                const repliedMessages = new Set();
+                const messageId = message.key.id;
+                const sender = message.key.remoteJid;
+                const isMe = message.key.fromMe;  // Check if the message is from the bot itself
+                console.log("TOUCHING HERE!");
+                if (messageId && !repliedMessages.has(messageId)) {
+                    const receivedMessage = message.message?.extendedTextMessage?.text || message.message?.conversation;
+
+                    if (isMe || repliedMessages.has(messageId)) {
+                        return;
                     }
 
-                    await sock.sendMessage(config.groupDumper, { text: deletedMessageDetails });
-                    console.log("Deleted message detected and content sent.");
-                } else {
-                    console.log("Deleted message content not found.");
+                    repliedMessages.add(messageId);
+
+                    if (receivedMessage.includes(".status")) {
+                        if (isGroup) {
+                            await sock.sendMessage(sender, { text: `I'm OK` }, {
+                                quoted: {
+                                    key: {
+                                        remoteJid: sender,
+                                        id: messageId,
+                                        participant: message.key.participant
+                                    },
+                                    message: {
+                                        conversation: ''
+                                    }
+                                }
+                            }
+                            );
+                        }
+                        else {
+                            await sock.sendMessage(sender, { text: `I'm OK` });
+                        }
+                    }
                 }
-            }                        
-            
-            // Store all incoming messages
-            const messageContent = message.message?.extendedTextMessage?.text || message.message?.conversation;
-            if (messageContent) {
-                storeMessage(message.key, messageContent);
             }
 
-        } catch (error) {
+        }
+        catch (error) {
             console.error('Error', error);
             logErrorToFile(error, config);
         }
-    });
+    })
 }
-
-connectToWhatsApp();
+// run in main file
+connectToWhatsApp()
