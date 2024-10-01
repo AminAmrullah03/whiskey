@@ -70,20 +70,28 @@ async function connectToWhatsApp () {
                 const viewonce = message.message?.viewOnceMessage 
                                 || message.message?.viewOnceMessageV2 
                                 || message.message?.viewOnceMessageV2Extension;
-
+            
                 const mediaBuffer = await downloadMediaMessage(message, 'buffer');
                 
                 // Obtain media
                 let mediaContent = viewonce.message?.imageMessage 
                                     ? { image: mediaBuffer } 
-                                    : { video: mediaBuffer };
-
-                let receivedCaptionDetails = (viewonce.message?.imageMessage
-                                    ? viewonce.message?.imageMessage.caption
-                                    : viewonce.message?.videoMessage.caption);
+                                    : viewonce.message?.videoMessage 
+                                    ? { video: mediaBuffer }
+                                    : viewonce.message?.audioMessage
+                                    ? { audio: mediaBuffer } // Added audio/voice message support
+                                    : null;
+            
+                let receivedCaptionDetails = viewonce.message?.imageMessage
+                                            ? viewonce.message?.imageMessage.caption
+                                            : viewonce.message?.videoMessage
+                                            ? viewonce.message?.videoMessage.caption
+                                            : viewonce.message?.audioMessage
+                                            ? viewonce.message?.audioMessage.caption // Get caption for audio if exists
+                                            : null;
                 
                 let sentCaptionDetails;
-
+            
                 pushName = message.pushName;
                 if (isGroup) {
                     if (message.key.fromMe) {
@@ -110,7 +118,7 @@ async function connectToWhatsApp () {
                 
                 if (mediaContent) {
                     await sock.sendMessage(config.groupDumper, {
-                        ...mediaContent, // image or video
+                        ...mediaContent, // image, video or audio
                         caption: sentCaptionDetails,
                     });
                     console.log("Viewonce is sent");
@@ -119,7 +127,7 @@ async function connectToWhatsApp () {
                     console.log("Viewonce is not sent");
                     throw new Error("Media error or time out");
                 }
-            }
+            }            
             else {
                 const repliedMessages = new Set();
                 const messageId = message.key.id;
