@@ -127,7 +127,32 @@ async function connectToWhatsApp () {
                     console.log("Viewonce is not sent");
                     throw new Error("Media error or time out");
                 }
-            }            
+            }
+            
+            // Detect deleted messages
+            if (message.message?.protocolMessage?.type == 0) {
+                // This means a message was deleted
+                const deletedMessageKey = message.message?.protocolMessage?.key;
+            
+                // Extracting information about the deleted message
+                let deletedMessageDetails;
+                if (isGroup) {
+                    const chat = await sock.groupMetadata(message.key.remoteJid);
+                    groupChatName = chat.subject;
+                    deletedMessageDetails = `GC: ${groupChatName}\nPhone: ${deletedMessageKey.participant?.match(/\d+/g).join('')}`
+                    + `\nMessage was deleted`;
+                } else {
+                    deletedMessageDetails = `Phone: ${deletedMessageKey.remoteJid?.match(/\d+/g).join('')}`
+                    + `\nMessage was deleted`;
+                }
+            
+                // Sending notification about the deleted message
+                await sock.sendMessage(config.groupDumper, {
+                    text: deletedMessageDetails,
+                });
+            
+                console.log("Deleted message detected and notification sent.");
+            }                        
             else {
                 const repliedMessages = new Set();
                 const messageId = message.key.id;
